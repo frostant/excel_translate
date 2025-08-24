@@ -135,6 +135,7 @@ def translate_text(text: str, task_context: str = "", model: str = MODEL) -> str
     except Exception as e:
         return f"[错误]: {e}"
 
+
 # ========== 主流程 ==========
 def process_workbook(input_path: str, output_path: str = None, model: str = MODEL,
                      progress_cb=None, use_tqdm: bool = True):
@@ -187,8 +188,9 @@ def process_workbook(input_path: str, output_path: str = None, model: str = MODE
 
 def main():
     # CLI：读取 INPUT_XLSX 并写入 OUTPUT_XLSX
-    out = process_workbook(INPUT_XLSX, OUTPUT_XLSX, model=MODEL, progress_cb=None, use_tqdm=True)
-    print(f"完成：输出文件 -> {OUTPUT_XLSX}，累计估算 tokens = {used_tokens}")
+    # out = process_workbook(INPUT_XLSX, OUTPUT_XLSX, model=MODEL, progress_cb=None, use_tqdm=True)
+    # print(f"完成：输出文件 -> {OUTPUT_XLSX}，累计估算 tokens = {used_tokens}")
+    pass 
 
 
 # ========== Streamlit 网页 MVP ==========
@@ -209,27 +211,52 @@ def run_streamlit_app():
 
     uploaded = st.file_uploader("上传 Excel 文件 (.xlsx)", type=["xlsx"]) 
 
-    if uploaded is not None:
-        # 将上传内容落到临时文件
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_in:
-            tmp_in.write(uploaded.read())
-            in_path = tmp_in.name
+    # 初始化会话态：不作为缓存复用逻辑，而是仅标记一次任务完成状态
+    if "translated_file" not in st.session_state:
+        st.session_state["translated_file"] = None
+    if "processed" not in st.session_state:
+        st.session_state["processed"] = False
 
-        # 进度条
-        prog = st.progress(0)
-        def progress_cb(done, total):
-            if total:
-                prog.progress(min(100, int(done * 100 / total)))
+    if uploaded is not None and not st.session_state["processed"]:
+        # 显示“开始翻译”按钮，避免上传即自动触发
+        if st.button("开始翻译"):
+            # 将上传内容落到临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_in:
+                tmp_in.write(uploaded.read())
+                in_path = tmp_in.name
 
-        # 动态调整全局上限与模型
-        # global MAX_TOKENS
-        MAX_TOKENS = int(max_tokens)
+            # 进度条
+            prog = st.progress(0)
+            def progress_cb(done, total):
+                if total:
+                    prog.progress(min(100, int(done * 100 / total)))
 
-        st.write("开始处理……")
-        bio = process_workbook(in_path, output_path=None, model=model, progress_cb=progress_cb, use_tqdm=False)
+            # 动态调整全局上限与模型
+            MAX_TOKENS = int(max_tokens)
 
-        st.success("处理完成！")
-        st.download_button("⬇️ 下载翻译结果", data=bio.getvalue(), file_name="translated.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            try:
+                st.write("开始处理……")
+                bio = process_workbook(in_path, output_path=None, model=model, progress_cb=progress_cb, use_tqdm=False)
+                st.session_state["translated_file"] = bio.getvalue()
+                st.session_state["processed"] = True
+                st.success("处理完成！")
+            finally:
+                # 删除原始临时文件，避免下次 rerun 继续处理
+                try:
+                    os.remove(in_path)
+                except Exception:
+                    pass
+
+    # 若已完成，则仅展示下载按钮，不再触发处理
+    if st.session_state["processed"] and st.session_state["translated_file"] is not None:
+        st.download_button(
+            "⬇️ 下载翻译后的文件",
+            data=st.session_state["translated_file"],
+            file_name="translated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.info("如需重新翻译新文件，请刷新页面或清空会话（Rerun）后再次上传.")
+
 
 if __name__ == "__main__":
     # 如果通过 streamlit 启动（`streamlit run trans_excel.py`），下行不会执行
