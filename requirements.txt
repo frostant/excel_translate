@@ -1,0 +1,5 @@
+streamlit
+openpyxl
+tiktoken
+openai
+tqdm
